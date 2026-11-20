@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>MINFTHI — El alma perdida</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#050606;color:#eee;font-family:monospace}
+#stage{height:100%;display:grid;place-items:center;background:#080909}
+#gamebox{position:relative;width:min(100vw,1100px);aspect-ratio:16/9;max-height:100vh;background:#111;overflow:hidden;border:2px solid #333;box-shadow:0 0 45px #000}
+canvas{display:block;width:100%;height:100%;image-rendering:pixelated}
+#hud{position:absolute;top:12px;left:14px;right:14px;display:none;justify-content:space-between;gap:8px;font-size:clamp(10px,1.5vw,16px);text-shadow:2px 2px #000;pointer-events:none}
+#message{position:absolute;bottom:13%;left:5%;right:5%;text-align:center;font-size:clamp(10px,1.4vw,15px);color:#eee;text-shadow:2px 2px #000;pointer-events:none}
+.panel{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:18px;background:linear-gradient(#08090ac9,#08090ae8)}
+.panel h1{font-size:clamp(34px,7vw,76px);letter-spacing:5px;color:#e51b23;text-shadow:4px 4px #000;margin:0}
+.panel h2{font-size:clamp(13px,2.2vw,23px);letter-spacing:3px;margin:4px 0 18px}
+.panel p{max-width:650px;color:#d0d0ca;line-height:1.6;font-size:clamp(11px,1.5vw,15px)}
+button{font:bold clamp(14px,2vw,20px) monospace;color:#eee;background:#141a17;border:3px solid #77806d;border-radius:7px;padding:10px 27px;margin:6px;cursor:pointer;box-shadow:0 5px #292e28}
+button:hover{background:#263328}
+.small{font-size:10px!important;color:#999!important}
+#touch{display:none;position:absolute;bottom:12px;left:12px;right:12px;justify-content:space-between;align-items:end;pointer-events:none}
+.pad{display:grid;grid-template-columns:repeat(3,42px);grid-template-rows:repeat(2,38px);gap:3px;pointer-events:auto}
+.pad button,#run{padding:5px;margin:0;font-size:15px;background:#121713c9;touch-action:none}
+#run{pointer-events:auto}
+@media(pointer:coarse){#touch{display:flex}#message{bottom:100px}}
+</style></head>
+<body><div id="stage"><div id="gamebox">
+<canvas id="view" width="480" height="270"></canvas>
+<div id="hud"><span id="souls">ALMA: 0/5</span><span id="life">VIDA: ♥ ♥ ♥</span><span id="status">BOSQUE MALDITO</span></div>
+<div id="message"></div>
+<div id="menu" class="panel"><h1>MINFTHI</h1><h2>EL ALMA PERDIDA</h2>
+<p>Despiertas en un bosque que no debería existir. Tu alma está dividida en cinco fragmentos. Encuéntralos… antes de que la sombra te encuentre a ti.</p>
+<button id="play">INICIAR</button><button id="instructions">CÓMO JUGAR</button>
+<p class="small">DEMO EN PRIMERA PERSONA · PIXEL ART HORROR</p></div>
+<div id="help" class="panel" style="display:none"><h2>CONTROLES</h2><p><b>WASD / FLECHAS:</b> caminar y girar.<br><b>MOUSE:</b> mirar alrededor (haz clic en el juego).<br><b>SHIFT:</b> correr.<br>En móvil usa las flechas y arrastra la pantalla para mirar.<br><br>Busca los cinco fragmentos rojos. La sombra te sigue. No permitas que te alcance.</p><button id="back">VOLVER</button></div>
+<div id="end" class="panel" style="display:none"><h1 id="endtitle">FIN</h1><h2 id="enddesc"></h2><button id="retry">JUGAR OTRA VEZ</button><button id="tomenu">MENÚ</button></div>
+<div id="touch"><div class="pad"><span></span><button data-key="forward">▲</button><span></span><button data-key="left">◀</button><button data-key="backward">▼</button><button data-key="right">▶</button></div><button id="run">CORRER</button></div>
+</div></div>
+<script>
+(()=>{
+const canvas=document.getElementById('view'),ctx=canvas.getContext('2d');
+const W=canvas.width,H=canvas.height, FOV=Math.PI/3, mapW=16,mapH=16;
+const world=[
+"################","##....#.......##","#.....#........#","#..............#","#..##......##..#","#..#...........#","#..#..##.......#","#.....##.......#","#..............#","#.......##.....#","#.......##.....#","#..............#","#....#.........#","#....#.....##..#","#..............#","################"
+];
+let mode='menu',player,monster,shards,life,score,keys={},zbuf=new Float32Array(W),last=0,damageFlash=0,notice='',noticeTime=0,mouseDown=false;
+const $=id=>document.getElementById(id);
+function wall(x,y){let mx=Math.floor(x),my=Math.floor(y);return mx<0||my<0||mx>=mapW||my>=mapH||world[my][mx]==='#'}
+function reset(){
+ player={x:2.5,y:2.5,a:.25,hp:3};monster={x:12.5,y:12.5,step:0};
+ shards=[{x:5.5,y:2.5},{x:11.5,y:3.5},{x:3.5,y:8.5},{x:12.5,y:8.5},{x:7.5,y:13.5}].map(s=>({...s,got:false,phase:Math.random()*6}));
+ life=3;score=0;damageFlash=0;notice='Encuentra los cinco fragmentos de tu alma.';noticeTime=4;
+}
+function start(){reset();mode='play';$('menu').style.display='none';$('help').style.display='none';$('end').style.display='none';$('hud').style.display='flex';$('message').textContent=notice;last=performance.now();}
+function finish(win){mode='end';$('hud').style.display='none';$('end').style.display='flex';$('endtitle').textContent=win?'ALMA RECUPERADA':'TE HA ENCONTRADO';$('enddesc').textContent=win?'Los cinco fragmentos se unieron. Pero algo salió del bosque contigo…':'La sombra consumió a Minfthi. Fragmentos encontrados: '+shards.filter(s=>s.got).length+'/5';}
+function cast(angle){
+ let rayX=Math.cos(angle),rayY=Math.sin(angle),mapX=Math.floor(player.x),mapY=Math.floor(player.y);
+ let deltaX=Math.abs(1/(rayX||.000001)),deltaY=Math.abs(1/(rayY||.000001));
+ let stepX,stepY,sideX,sideY;
+ if(rayX<0){stepX=-1;sideX=(player.x-mapX)*deltaX}else{stepX=1;sideX=(mapX+1-player.x)*deltaX}
+ if(rayY<0){stepY=-1;sideY=(player.y-mapY)*deltaY}else{stepY=1;sideY=(mapY+1-player.y)*deltaY}
+ let side=0,hit=false,loops=0;
+ while(!hit&&loops++<40){if(sideX<sideY){sideX+=deltaX;mapX+=stepX;side=0}else{sideY+=deltaY;mapY+=stepY;side=1}if(mapY<0||mapY>=mapH||mapX<0||mapX>=mapW||world[mapY][mapX]==='#')hit=true;}
+ let dist=side===0?sideX-deltaX:sideY-deltaY;dist=Math.max(.001,dist*Math.cos(angle-player.a));
+ return {dist,side,hitX:mapX,hitY:mapY,rayX,rayY};
+}
+function draw(){
+ // sky and ground
+ let sky=ctx.createLinearGradient(0,0,0,H/2);sky.addColorStop(0,'#080a0b');sky.addColorStop(1,'#353838');ctx.fillStyle=sky;ctx.fillRect(0,0,W,H/2);
+ let floor=ctx.createLinearGradient(0,H/2,0,H);floor.addColorStop(0,'#353633');floor.addColorStop(1,'#090a09');ctx.fillStyle=floor;ctx.fillRect(0,H/2,W,H/2);
+ if(!player){return}
+ for(let x=0;x<W;x++){
+  let angle=player.a-FOV/2+(x/W)*FOV,r=cast(angle),dist=r.dist;
+  zbuf[x]=dist;
+  let height=Math.min(H*2,H/(dist||.1)),top=(H-height)/2;
+  let shade=Math.max(13,Math.floor(83/(1+dist*.23)))-(r.side?10:0);
+  let stripe=((r.hitX*7+r.hitY*13)%4===0)?8:0;
+  ctx.fillStyle=`rgb(${shade+stripe},${shade+stripe+1},${shade+stripe+2})`;
+  ctx.fillRect(x,top,1,height);
+  // irregular dark bark seams
+  if((x+r.hitX*3)%29===0){ctx.fillStyle='rgba(0,0,0,.28)';ctx.fillRect(x,top,1,height)}
+ }
+ // sprites rendered far to near
+ const sprites=shards.filter(s=>!s.got).map(s=>({...s,type:'soul'}));
+ sprites.push({...monster,type:'monster'});
+ sprites.sort((a,b)=>Math.hypot(b.x-player.x,b.y-player.y)-Math.hypot(a.x-player.x,a.y-player.y));
+ for(const s of sprites){
+  let dx=s.x-player.x,dy=s.y-player.y,dist=Math.hypot(dx,dy),angle=Math.atan2(dy,dx)-player.a;
+  while(angle>Math.PI)angle-=Math.PI*2;while(angle< -Math.PI)angle+=Math.PI*2;
+  if(Math.abs(angle)>FOV*.72||dist<.25)continue;
+  let sx=(.5+angle/FOV)*W,size=Math.min(H*1.5,H/dist*(s.type==='monster'?.9:.42)),sy=H/2-size*.5;
+  let left=Math.floor(sx-size*.35),right=Math.floor(sx+size*.35);
+  if(s.type==='soul'){
+   let pulse=Math.sin(performance.now()/170+s.phase)*3;
+   for(let x=left;x<right;x++)if(x>=0&&x<W&&dist<zbuf[x]){ctx.fillStyle='#6d080d';ctx.fillRect(x,sy+size*.35+pulse,size>30?3:2,size*.25);ctx.fillStyle='#f01d25';ctx.fillRect(x,sy+size*.39+pulse,size>30?3:2,size*.12)}
+  }else{
+   for(let x=left;x<right;x++)if(x>=0&&x<W&&dist<zbuf[x]){
+    let rel=(x-left)/Math.max(1,right-left),cx=sx,top=sy;
+    ctx.fillStyle='#080809';ctx.fillRect(x,top+size*.18,2,size*.72);
+    ctx.fillStyle='#171819';ctx.fillRect(x,top+size*.08,2,size*.35);
+    if(rel>.2&&rel<.43||rel>.58&&rel<.8){ctx.fillStyle='#f21d24';ctx.fillRect(x,top+size*.32,2,Math.max(2,size*.055))}
+   }
+  }
+ }
+ // crosshair
+ ctx.fillStyle='rgba(230,230,220,.65)';ctx.fillRect(W/2-3,H/2,7,1);ctx.fillRect(W/2,H/2-3,1,7);
+ // red damage overlay
+ if(damageFlash>0){ctx.fillStyle=`rgba(150,0,0,${Math.min(.28,damageFlash*.0003)})`;ctx.fillRect(0,0,W,H)}
+ // vignette
+ let vg=ctx.createRadialGradient(W/2,H/2,35,W/2,H/2,250);vg.addColorStop(0,'transparent');vg.addColorStop(1,'rgba(0,0,0,.72)');ctx.fillStyle=vg;ctx.fillRect(0,0,W,H);
+}
+function move(dt){
+ const turn=(keys.ArrowLeft||keys.a||keys.left?-1:0)+(keys.ArrowRight||keys.d||keys.right?1:0);
+ player.a+=turn*dt*.0025;
+ let forward=(keys.w||keys.ArrowUp||keys.forward?1:0)-(keys.s||keys.ArrowDown||keys.backward?1:0);
+ let strafe=(keys.d||keys.right?1:0)-(keys.a||keys.left?1:0);
+ // A/D rotate; Q/E or touch side buttons strafe is not needed
+ let speed=(keys.Shift?3.0:1.85)*dt/1000;
+ let nx=player.x+Math.cos(player.a)*forward*speed,ny=player.y+Math.sin(player.a)*forward*speed;
+ if(!wall(nx+.16*Math.sign(forward),player.y))player.x=nx;
+ if(!wall(player.x,ny+.16*Math.sign(forward)))player.y=ny;
+ // monster pursues, but respects walls
+ let ex=player.x-monster.x,ey=player.y-monster.y,d=Math.hypot(ex,ey)||1;
+ let ms=.55+shards.filter(s=>s.got).length*.09;
+ let mx=monster.x+ex/d*ms*dt/1000,my=monster.y+ey/d*ms*dt/1000;
+ if(!wall(mx,monster.y))monster.x=mx;if(!wall(monster.x,my))monster.y=my;
+ for(const s of shards)if(!s.got&&Math.hypot(player.x-s.x,player.y-s.y)<.55){s.got=true;score+=100;notice='Fragmento recuperado… algo te ha escuchado.';noticeTime=2.5}
+ if(Math.hypot(player.x-monster.x,player.y-monster.y)<.62&&damageFlash<=0){life--;damageFlash=1800;notice='¡LA SOMBRA TE ALCANZÓ!';noticeTime=1.5;player.x=2.5;player.y=2.5;if(life<=0){finish(false);return}}
+ damageFlash=Math.max(0,damageFlash-dt);noticeTime=Math.max(0,noticeTime-dt);
+ if(shards.every(s=>s.got)){finish(true);return}
+ $('souls').textContent='ALMA: '+shards.filter(s=>s.got).length+'/5';$('life').textContent='VIDA: '+'♥ '.repeat(life);$('status').textContent=distText();
+ $('message').textContent=noticeTime>0?notice:(shards.filter(s=>!s.got).length+' fragmentos restantes · La sombra está cerca…');
+}
+function distText(){let d=Math.hypot(player.x-monster.x,player.y-monster.y);return d<3?'¡PELIGRO!':d<6?'ALGO TE SIGUE':'BOSQUE MALDITO'}
+function loop(t){let dt=Math.min(40,t-last||16);last=t;if(mode==='play')move(dt);draw();requestAnimationFrame(loop)}
+document.addEventListener('keydown',e=>{keys[e.key]=true;if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key))e.preventDefault()});
+document.addEventListener('keyup',e=>keys[e.key]=false);
+document.querySelectorAll('[data-key]').forEach(b=>{let k=b.dataset.key;b.addEventListener('pointerdown',e=>{e.preventDefault();keys[k]=true});['pointerup','pointerleave','pointercancel'].forEach(ev=>b.addEventListener(ev,()=>keys[k]=false))});
+$('run').addEventListener('pointerdown',()=>keys.Shift=true);['pointerup','pointerleave','pointercancel'].forEach(ev=>$('run').addEventListener(ev,()=>keys.Shift=false));
+canvas.addEventListener('click',()=>{if(mode==='play'&&canvas.requestPointerLock)canvas.requestPointerLock()});
+document.addEventListener('mousemove',e=>{if(mode==='play'&&document.pointerLockElement===canvas)player.a+=e.movementX*.003});
+let touchX=null;canvas.addEventListener('touchstart',e=>{touchX=e.touches[0].clientX},{passive:true});
+canvas.addEventListener('touchmove',e=>{if(mode==='play'&&touchX!==null){let x=e.touches[0].clientX;player.a+=(x-touchX)*.009;touchX=x}},{passive:true});
+canvas.addEventListener('touchend',()=>touchX=null);
+$('play').onclick=start;$('instructions').onclick=()=>{$('menu').style.display='none';$('help').style.display='flex'};
+$('back').onclick=()=>{$('help').style.display='none';$('menu').style.display='flex'};
+$('retry').onclick=start;$('tomenu').onclick=()=>{$('end').style.display='none';$('menu').style.display='flex';mode='menu'};
+requestAnimationFrame(loop);
+})();
+</script></body></html>
